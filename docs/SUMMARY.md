@@ -194,8 +194,8 @@ yum install -y chromium-headless
 pip install playwright
 
 # 使用
-cd /opt/moshi-engine/runtime/web/backend
-.venv_311/bin/python3 /opt/moshi-engine/runtime/scripts/huasheng_upload_pw.py \
+cd /opt/wildflow/runtime/web/backend
+.venv_311/bin/python3 /opt/wildflow/runtime/scripts/huasheng_upload_pw.py \
   /path/to/audio.mp3 \
   "视频文案..." \
   --sessdata "$SESSDATA" \
@@ -245,7 +245,7 @@ def upload_via_playwright(audio_path, script, sessdata, csrf):
     """直接调用服务器上的 Chromium 完成上传"""
     result = subprocess.run([
         sys.executable,
-        "/opt/moshi-engine/runtime/scripts/huasheng_upload_pw.py",
+        "/opt/wildflow/runtime/scripts/huasheng_upload_pw.py",
         audio_path, script,
         "--sessdata", sessdata,
         "--csrf", csrf,
@@ -301,10 +301,10 @@ async def check_daily_limit(db, sub_code):
 
 | 路径 | 说明 |
 |------|------|
-| `/opt/moshi-engine/runtime/scripts/huasheng_upload_pw.py` | Playwright 上传脚本 |
-| `/opt/moshi-engine/runtime/web/backend/app/services/huasheng/api_client.py` | 已有 HTTP 客户端 |
-| `/opt/moshi-engine/runtime/web/backend/app/services/huasheng/job_manager.py` | 任务管理器 |
-| `/opt/moshi-engine/runtime/web/backend/app/routers/huasheng.py` | 花生 API 路由 |
+| `/opt/wildflow/runtime/scripts/huasheng_upload_pw.py` | Playwright 上传脚本 |
+| `/opt/wildflow/runtime/web/backend/app/services/huasheng/api_client.py` | 已有 HTTP 客户端 |
+| `/opt/wildflow/runtime/web/backend/app/services/huasheng/job_manager.py` | 任务管理器 |
+| `/opt/wildflow/runtime/web/backend/app/routers/huasheng.py` | 花生 API 路由 |
 
 ---
 
