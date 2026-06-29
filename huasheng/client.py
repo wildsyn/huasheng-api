@@ -465,8 +465,6 @@ class HuashengClient:
         Yields:
             每个 SSE 事件解析后的 dict
         """
-        import requests as req
-
         url = C.CHAT_EVENTS
         params = {"run_id": run_id, "project_id": pid}
 
