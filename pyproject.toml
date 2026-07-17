@@ -32,6 +32,12 @@ dev = [
     "ruff>=0.1.0",
 ]
 
+[tool.ruff]
+extend = "../.shared-config/ruff-base.toml"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+
 [build-system]
 requires = ["setuptools>=68.0"]
 build-backend = "setuptools.build_meta"

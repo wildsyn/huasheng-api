@@ -19,7 +19,7 @@ WildFlow 花生视频制作提供三种接入方式：
 | **② 自有账号** | 用户自己的 B站号（扫码绑定） | WildFlow 服务器 | 想用自己的号，但不想自己运维 |
 | **③ 开源 SDK（本项目）** | 用户自己管理 | 用户自己部署 | 完全自控，不依赖 WildFlow 平台 |
 
-> ① 和 ② 通过 WildFlow API 调用（`open.wildflow.cn`），本项目（huasheng-api）是 ③ 的 Python SDK。
+> ① 和 ② 通过 WildFlow API 调用（`cloud.wildflow.cn`），本项目（huasheng-api）是 ③ 的 Python SDK。
 
 ## 状态
 
