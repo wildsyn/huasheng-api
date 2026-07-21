@@ -16,7 +16,9 @@ import pytest
 
 from huasheng import HuashengClient, constants
 
-MEDIA_BYTES = b"\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00mp42isom\x00\x00\x00\x0cmdatmedia"
+MEDIA_BYTES = (
+    b"\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00mp42isom\x00\x00\x00\x0cmdatmedia"
+)
 
 
 class HuashengProtocolHandler(BaseHTTPRequestHandler):
@@ -42,7 +44,9 @@ class HuashengProtocolHandler(BaseHTTPRequestHandler):
     def do_POST(self):  # noqa: N802 - required by BaseHTTPRequestHandler
         parsed = urlparse(self.path)
         payload = self._read_json()
-        self.server.requests.append(("POST", parsed.path, payload, parse_qs(parsed.query)))
+        self.server.requests.append(
+            ("POST", parsed.path, payload, parse_qs(parsed.query))
+        )
 
         if parsed.path == "/api/huasheng/project/create":
             if parse_qs(parsed.query).get("csrf") != ["test-csrf"]:
@@ -66,7 +70,9 @@ class HuashengProtocolHandler(BaseHTTPRequestHandler):
             if not self.server.return_task_id:
                 self._send_json({"code": 0, "data": {}})
                 return
-            self._send_json({"task_id": "task-1", "version": "2", "project_hash": "hash-1"})
+            self._send_json(
+                {"task_id": "task-1", "version": "2", "project_hash": "hash-1"}
+            )
             return
 
         self._send_json({"message": "unexpected POST"}, status=404)
@@ -95,9 +101,17 @@ class HuashengProtocolHandler(BaseHTTPRequestHandler):
             return
 
         if parsed.path == "/api/innovideo/project/export/video/info":
-            expected = {"id": ["654"], "task_id": ["task-1"], "project_hash": ["hash-1"]}
+            expected = {
+                "id": ["654"],
+                "task_id": ["task-1"],
+                "project_hash": ["hash-1"],
+            }
             if query != expected:
                 self._send_json({"message": "invalid export query"}, status=422)
+                return
+            self.server.export_polls += 1
+            if self.server.export_polls == 1:
+                self._send_json({"url": "", "progress": "35"})
                 return
             media_url = "http://{host}:{port}/media/result.mp4".format(
                 host=self.server.server_address[0], port=self.server.server_address[1]
@@ -110,7 +124,7 @@ class HuashengProtocolHandler(BaseHTTPRequestHandler):
                 self._send_json({"message": "missing referer"}, status=403)
                 return
             self.send_response(200)
-            self.send_header("Content-Type", "video/mp4")
+            self.send_header("Content-Type", self.server.media_content_type)
             self.send_header("Content-Length", str(len(MEDIA_BYTES)))
             self.end_headers()
             self.wfile.write(MEDIA_BYTES)
@@ -124,14 +138,20 @@ def protocol_server(monkeypatch):
     server = ThreadingHTTPServer(("127.0.0.1", 0), HuashengProtocolHandler)
     server.requests = []
     server.return_task_id = True
+    server.export_polls = 0
+    server.media_content_type = "video/mp4"
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
 
     base_url = "http://{host}:{port}".format(
         host=server.server_address[0], port=server.server_address[1]
     )
-    monkeypatch.setattr(constants, "PROJECT_CREATE", base_url + "/api/huasheng/project/create")
-    monkeypatch.setattr(constants, "PROJECT_INFO", base_url + "/api/innovideo/project/info")
+    monkeypatch.setattr(
+        constants, "PROJECT_CREATE", base_url + "/api/huasheng/project/create"
+    )
+    monkeypatch.setattr(
+        constants, "PROJECT_INFO", base_url + "/api/innovideo/project/info"
+    )
     monkeypatch.setattr(
         constants,
         "EXPORT_TASK",
@@ -164,21 +184,33 @@ def test_public_sdk_create_export_and_download(protocol_server, tmp_path):
 
     project = client.create_project(script="真实 SDK 协议测试文案")
     output = tmp_path / "result.mp4"
-    result_path = client.export_and_download(project.id, str(output), project.project_hash)
+    result_path = client.export_and_download(
+        project.id, str(output), project.project_hash
+    )
 
     assert project.pid == 321
     assert project.id == "654"
     assert result_path == str(output)
     assert output.read_bytes() == MEDIA_BYTES
     assert (
-        hashlib.sha256(output.read_bytes()).hexdigest() == hashlib.sha256(MEDIA_BYTES).hexdigest()
+        hashlib.sha256(output.read_bytes()).hexdigest()
+        == hashlib.sha256(MEDIA_BYTES).hexdigest()
     )
+    assert client.last_download_evidence == {
+        "content_type": "video/mp4",
+        "content_length": len(MEDIA_BYTES),
+        "bytes_downloaded": len(MEDIA_BYTES),
+        "sha256": hashlib.sha256(MEDIA_BYTES).hexdigest(),
+    }
 
-    paths = [(method, path) for method, path, _payload, _query in protocol_server.requests]
+    paths = [
+        (method, path) for method, path, _payload, _query in protocol_server.requests
+    ]
     assert paths == [
         ("POST", "/api/huasheng/project/create"),
         ("GET", "/api/innovideo/project/info"),
         ("POST", "/api/innovideo/project/export/video/task"),
+        ("GET", "/api/innovideo/project/export/video/info"),
         ("GET", "/api/innovideo/project/export/video/info"),
         ("GET", "/media/result.mp4"),
     ]
@@ -190,3 +222,14 @@ def test_public_sdk_rejects_export_without_task_id(protocol_server):
 
     with pytest.raises(RuntimeError, match="导出任务创建失败"):
         client.export_video(654)
+
+
+def test_public_sdk_rejects_non_video_download(protocol_server, tmp_path):
+    protocol_server.media_content_type = "text/html"
+    client = make_client()
+    media_url = "http://{host}:{port}/media/result.mp4".format(
+        host=protocol_server.server_address[0], port=protocol_server.server_address[1]
+    )
+
+    with pytest.raises(RuntimeError, match="下载响应不是视频"):
+        client.download_video(media_url, str(tmp_path / "invalid-media.mp4"))

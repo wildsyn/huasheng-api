@@ -60,7 +60,7 @@ def _probe_media(path):
     os.environ.get("HUASHENG_REAL_E2E") != "1",
     reason="set HUASHENG_REAL_E2E=1 to allow a real paid/external project",
 )
-def test_real_project_download_is_complete_media(tmp_path):
+def test_real_project_download_is_complete_media(tmp_path, record_property):
     sessdata = _required_environment("HUASHENG_SESSDATA")
     bili_jct = _required_environment("HUASHENG_BILI_JCT")
     script = _required_environment("HUASHENG_REAL_SCRIPT")
@@ -82,11 +82,30 @@ def test_real_project_download_is_complete_media(tmp_path):
 
     assert output.is_file()
     assert output.stat().st_size > 1024
-    digest = _sha256_file(output)
-    assert len(digest) == 64
+    evidence = client.last_download_evidence
+    assert evidence is not None
+    assert evidence["content_type"].startswith("video/")
+    assert evidence["bytes_downloaded"] == output.stat().st_size
+    if evidence["content_length"] is not None:
+        assert evidence["content_length"] == output.stat().st_size
+    assert evidence["sha256"] == _sha256_file(output)
 
     probe = _probe_media(output)
     assert float(probe["format"]["duration"]) > 0
     assert "mp4" in probe["format"]["format_name"]
     stream_types = {stream["codec_type"] for stream in probe["streams"]}
     assert {"video", "audio"}.issubset(stream_types)
+    assert all(stream.get("codec_name") for stream in probe["streams"])
+
+    record_property("download_evidence", json.dumps(evidence, sort_keys=True))
+    record_property(
+        "media_probe",
+        json.dumps(
+            {
+                "duration": probe["format"]["duration"],
+                "format_name": probe["format"]["format_name"],
+                "streams": probe["streams"],
+            },
+            sort_keys=True,
+        ),
+    )

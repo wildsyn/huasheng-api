@@ -4,6 +4,7 @@
 HuashengClient — 花生 AI 视频创作工具的主要 API 入口。
 """
 
+import hashlib
 import time
 import json
 import logging
@@ -68,6 +69,7 @@ class HuashengClient:
         )
         self.poll_interval = poll_interval
         self.poll_timeout = poll_timeout
+        self.last_download_evidence: Optional[Dict[str, Any]] = None
 
     # === 用户 ===
 
@@ -403,11 +405,36 @@ class HuashengClient:
         )
         resp.raise_for_status()
 
+        content_type = resp.headers.get("Content-Type", "").split(";", 1)[0].lower()
+        if not content_type.startswith("video/"):
+            raise RuntimeError(f"下载响应不是视频: content-type={content_type or 'missing'}")
+        content_length_header = resp.headers.get("Content-Length")
+        try:
+            content_length = int(content_length_header) if content_length_header else None
+        except ValueError as exc:
+            raise RuntimeError("下载响应 Content-Length 无效") from exc
+
         total = 0
+        digest = hashlib.sha256()
         with open(output_path, "wb") as f:
             for chunk in resp.iter_content(chunk_size=8192):
+                if not chunk:
+                    continue
                 f.write(chunk)
                 total += len(chunk)
+                digest.update(chunk)
+        if total == 0:
+            raise RuntimeError("下载响应为空")
+        if content_length is not None and total != content_length:
+            raise RuntimeError(
+                f"下载不完整: expected={content_length} bytes, received={total} bytes"
+            )
+        self.last_download_evidence = {
+            "content_type": content_type,
+            "content_length": content_length,
+            "bytes_downloaded": total,
+            "sha256": digest.hexdigest(),
+        }
         logger.info(f"视频已下载: {output_path} ({total} bytes)")
         return output_path
 
@@ -434,6 +461,8 @@ class HuashengClient:
             project_id,
             export["task_id"],
             project_hash or export.get("project_hash", ""),
+            poll_interval=self.poll_interval,
+            timeout=self.poll_timeout,
         )
         return self.download_video(cdn_url, output_path)
 
