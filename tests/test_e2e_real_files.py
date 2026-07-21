@@ -19,6 +19,14 @@ from huasheng import HuashengClient
 pytestmark = pytest.mark.real_external
 
 
+def _sha256_file(path):
+    digest = hashlib.sha256()
+    with path.open("rb") as media:
+        for chunk in iter(lambda: media.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def _required_environment(name):
     value = os.environ.get(name, "").strip()
     if not value:
@@ -74,7 +82,7 @@ def test_real_project_download_is_complete_media(tmp_path):
 
     assert output.is_file()
     assert output.stat().st_size > 1024
-    digest = hashlib.sha256(output.read_bytes()).hexdigest()
+    digest = _sha256_file(output)
     assert len(digest) == 64
 
     probe = _probe_media(output)
