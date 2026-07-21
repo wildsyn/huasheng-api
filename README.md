@@ -168,10 +168,13 @@ HUASHENG_REAL_E2E=1 \
 HUASHENG_SESSDATA='<temporary-test-cookie>' \
 HUASHENG_BILI_JCT='<temporary-test-csrf>' \
 HUASHENG_REAL_SCRIPT='<acceptance-script>' \
-python3 -m pytest -q tests/test_e2e_real_files.py
+python3 -m pytest -q tests/test_e2e_real_files.py \
+  --junitxml=huasheng-real-e2e.xml
 ```
 
-不要把真实 Cookie、CSRF、输入媒体路径或下载链接提交到仓库。
+将 XML 作为受控验收附件保存，其中包含下载大小、Content-Type、SHA-256、
+时长、格式、轨道和 codec 证据。不要把真实 Cookie、CSRF、输入媒体路径或
+下载链接提交到仓库。
 
 ## License
 
