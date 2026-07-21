@@ -37,6 +37,9 @@ extend = "../.shared-config/ruff-base.toml"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+markers = [
+    "real_external: opt-in tests that create real Huasheng projects and may consume quota",
+]
 
 [build-system]
 requires = ["setuptools>=68.0"]

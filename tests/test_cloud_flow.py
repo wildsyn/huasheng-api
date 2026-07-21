@@ -1,243 +1,192 @@
-#!/usr/bin/env python3
-"""
-花生云端连通性测试
+"""Local protocol integration tests for the public Huasheng SDK.
 
-测试完整流程：上传音频 + 文案 → 创建项目 → 输出 PID
-
-用法：
-  python tests/test_cloud_flow.py <音频文件路径> <文案文本> [--cookie SESSDATA] [--csrf bili_jct]
-
-环境变量：
-  HUASHENG_SESSDATA  — B站 SESSDATA cookie
-  HUASHENG_BILI_JCT  — B站 bili_jct (CSRF token)
-
-示例：
-  python tests/test_cloud_flow.py ~/Downloads/荆轲.mp3 "荆轲刺秦王..."
+These tests deliberately use a real localhost HTTP server instead of mocking
+``HuashengClient`` or reimplementing its request flow.  If the SDK stops
+sending the documented payload, CSRF query, polling request, or download
+headers, the server rejects the request and the test fails.
 """
 
-import os
-import sys
-import json
-import time
 import hashlib
-import logging
-import argparse
-from pathlib import Path
-from urllib.parse import quote, urlencode
+import json
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import parse_qs, urlparse
 
-import requests
+import pytest
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-)
-logger = logging.getLogger(__name__)
+from huasheng import HuashengClient, constants
 
-# ── 常量 ─────────────────────────────────────────────
-HUASHENG = "https://www.huasheng.cn"
-UA = (
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36"
-)
+MEDIA_BYTES = b"\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00mp42isom\x00\x00\x00\x0cmdatmedia"
 
 
-class HuashengUploader:
-    """花生音频上传 + 项目创建"""
+class HuashengProtocolHandler(BaseHTTPRequestHandler):
+    """Minimal deterministic server for the SDK's actual HTTP protocol."""
 
-    def __init__(self, sessdata: str, bili_jct: str):
-        self.sess = requests.Session()
-        self.sess.headers.update({
-            "User-Agent": UA,
-            "Referer": f"{HUASHENG}/",
-            "Origin": HUASHENG,
-        })
-        self.sess.cookies.set("SESSDATA", sessdata, domain=".huasheng.cn")
-        self.sess.cookies.set("SESSDATA", sessdata, domain=".bilibili.com")
-        self.sess.cookies.set("bili_jct", bili_jct, domain=".huasheng.cn")
-        self.sess.cookies.set("bili_jct", bili_jct, domain=".bilibili.com")
-        self.csrf = bili_jct
+    server_version = "HuashengProtocolTest/1.0"
 
-    # ── 步骤 1: 预上传（获取 upos CDN 地址）─────────────────
+    def log_message(self, _format, *_args):
+        return
 
-    def preupload(self, filepath: str) -> dict:
-        """获取 B站 upos 上传 URL"""
-        fsize = os.path.getsize(filepath)
-        fname = os.path.basename(filepath)
-        params = {
-            "name": fname,
-            "size": fsize,
-            "r": "upos",
-            "profile": "bilistudio/bup",
-            "ssl": "0",
-            "version": "3.0.1",
-            "build": "3000100",
-        }
-        url = f"{HUASHENG}/api/innovideo/preupload?{urlencode(params)}"
-        r = self.sess.get(url)
-        r.raise_for_status()
-        data = r.json()
-        if not data.get("OK"):
-            raise RuntimeError(f"preupload 失败: {data}")
-        logger.info(f"preupload OK: endpoint={data.get('endpoint', '?')}")
-        return data
+    def _send_json(self, payload, status=200):
+        body = json.dumps(payload).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
 
-    def upload_file(self, filepath: str, pre: dict) -> str:
-        """上传音频到 upos CDN，返回 upos:// URI"""
-        fsize = os.path.getsize(filepath)
-        fname = os.path.basename(filepath)
-        endpoint = pre["endpoint"].replace("//", "https://")
-        upos_uri = pre["upos_uri"]
-        put_query = pre.get("put_query", "os=upos")
+    def _read_json(self):
+        size = int(self.headers.get("Content-Length", "0"))
+        return json.loads(self.rfile.read(size) or b"{}")
 
-        # Step A: init upload
-        init_url = f"{endpoint}/{upos_uri.split('://', 1)[1]}?uploads&output=json"
-        r = self.sess.post(init_url)
-        r.raise_for_status()
-        init_data = r.json()
-        upload_id = init_data.get("uploadId", "")
-        logger.info(f"upload init: uploadId={upload_id[:16]}...")
+    def do_POST(self):  # noqa: N802 - required by BaseHTTPRequestHandler
+        parsed = urlparse(self.path)
+        payload = self._read_json()
+        self.server.requests.append(("POST", parsed.path, payload, parse_qs(parsed.query)))
 
-        # Step B: upload chunk (single chunk for <10MB files)
-        chunk_url = (
-            f"{endpoint}/{upos_uri.split('://', 1)[1]}"
-            f"?partNumber=1&uploadId={upload_id}&chunk=0&chunks=1"
-            f"&size={fsize}&start=0&end={fsize}&total={fsize}"
-        )
-        with open(filepath, "rb") as f:
-            r = self.sess.put(chunk_url, data=f.read())
-        r.raise_for_status()
-        logger.info(f"upload chunk: HTTP {r.status_code}")
+        if parsed.path == "/api/huasheng/project/create":
+            if parse_qs(parsed.query).get("csrf") != ["test-csrf"]:
+                self._send_json({"message": "missing csrf"}, status=403)
+                return
+            required = {
+                "script": "真实 SDK 协议测试文案",
+                "voice_id": 5866601,
+                "voice_type": 0,
+            }
+            if any(payload.get(key) != value for key, value in required.items()):
+                self._send_json({"message": "invalid create payload"}, status=422)
+                return
+            self._send_json({"code": 0, "data": {"pid": 321}})
+            return
 
-        # Step C: complete upload
-        complete_url = (
-            f"{endpoint}/{upos_uri.split('://', 1)[1]}"
-            f"?output=json&name={quote(fname)}&profile=bilistudio%2Fbup"
-            f"&uploadId={upload_id}&biz_id="
-        )
-        r = self.sess.post(complete_url)
-        r.raise_for_status()
-        logger.info(f"upload complete: HTTP {r.status_code}")
+        if parsed.path == "/api/innovideo/project/export/video/task":
+            if payload != {"id": 654}:
+                self._send_json({"message": "invalid export payload"}, status=422)
+                return
+            if not self.server.return_task_id:
+                self._send_json({"code": 0, "data": {}})
+                return
+            self._send_json({"task_id": "task-1", "version": "2", "project_hash": "hash-1"})
+            return
 
-        return upos_uri
+        self._send_json({"message": "unexpected POST"}, status=404)
 
-    # ── 步骤 2: 创建项目 ──────────────────────────────────
+    def do_GET(self):  # noqa: N802 - required by BaseHTTPRequestHandler
+        parsed = urlparse(self.path)
+        query = parse_qs(parsed.query)
+        self.server.requests.append(("GET", parsed.path, None, query))
 
-    def create_project(
-        self,
-        upos_url: str,
-        user_script: str,
-        audio_duration: float = 0,
-        user_script_type: int = 1,
-    ) -> dict:
-        """创建花生项目，返回 {pid, project_id}"""
-        payload = {
-            "name": "",
-            "is_denoise": 0,
-            "script": "",
-            "voice_type": 2,
-            "audio_url": upos_url,
-            "speech_rate": 1,
-            "speech_rate_change": 1,
-            "user_script": user_script,
-            "user_script_type": user_script_type,
-            "project_type": 0,
-            "is_agree": 0,
-            "is_multi": 0,
-            "audio_duration": audio_duration,
-        }
-        url = f"{HUASHENG}/api/huasheng/project/create?csrf={self.csrf}"
-        r = self.sess.post(url, json=payload)
-        r.raise_for_status()
-        data = r.json()
-        if data.get("code") != 0:
-            raise RuntimeError(f"创建项目失败: {data}")
+        if parsed.path == "/api/innovideo/project/info":
+            if query.get("pid") != ["321"]:
+                self._send_json({"message": "invalid pid"}, status=422)
+                return
+            self._send_json(
+                {
+                    "project": {
+                        "pid": 321,
+                        "id": "654",
+                        "state": "1",
+                        "state_message": "项目处理完成",
+                        "progress": "100",
+                        "project_hash": "hash-1",
+                    }
+                }
+            )
+            return
 
-        pid = data["data"]["pid"]
-        logger.info(f"✅ 项目创建成功: pid={pid}")
-        return {"pid": pid}
+        if parsed.path == "/api/innovideo/project/export/video/info":
+            expected = {"id": ["654"], "task_id": ["task-1"], "project_hash": ["hash-1"]}
+            if query != expected:
+                self._send_json({"message": "invalid export query"}, status=422)
+                return
+            media_url = "http://{host}:{port}/media/result.mp4".format(
+                host=self.server.server_address[0], port=self.server.server_address[1]
+            )
+            self._send_json({"url": media_url, "progress": "100"})
+            return
 
-    # ── 完整流程 ──────────────────────────────────────────
+        if parsed.path == "/media/result.mp4":
+            if self.headers.get("Referer") != "https://www.huasheng.cn/":
+                self._send_json({"message": "missing referer"}, status=403)
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "video/mp4")
+            self.send_header("Content-Length", str(len(MEDIA_BYTES)))
+            self.end_headers()
+            self.wfile.write(MEDIA_BYTES)
+            return
 
-    def run(self, audio_path: str, script: str) -> dict:
-        """完整流程：上传 → 创建 → 返回 PID"""
-        # 1. Preupload
-        logger.info("=" * 50)
-        logger.info("步骤 1/4: 预上传（获取 CDN 地址）...")
-        pre = self.preupload(audio_path)
-
-        # 2. Upload
-        logger.info("步骤 2/4: 上传音频...")
-        upos_url = self.upload_file(audio_path, pre)
-
-        # 3. Create
-        logger.info("步骤 3/4: 创建花生项目...")
-        fsize = os.path.getsize(audio_path)
-        # 粗略估算时长（128kbps MP3）
-        est_duration = fsize / (128 * 1000 / 8) if fsize > 0 else 0
-        result = self.create_project(
-            upos_url=upos_url,
-            user_script=script,
-            audio_duration=round(est_duration, 3),
-        )
-
-        # 4. Done
-        pid = result["pid"]
-        logger.info("=" * 50)
-        logger.info(f"🎉 完成！项目链接: https://www.huasheng.cn/video/{pid}")
-        logger.info(f"   PID: {pid}")
-        logger.info("=" * 50)
-        return result
+        self._send_json({"message": "unexpected GET"}, status=404)
 
 
-def main():
-    parser = argparse.ArgumentParser(description="花生云端连通性测试")
-    parser.add_argument("audio", help="音频文件路径 (.mp3)")
-    parser.add_argument("script", help="视频文案文本")
-    parser.add_argument("--sessdata", help="B站 SESSDATA cookie", default=None)
-    parser.add_argument("--csrf", help="B站 bili_jct", default=None)
-    parser.add_argument("--output", help="输出 JSON 结果文件", default=None)
-    args = parser.parse_args()
+@pytest.fixture
+def protocol_server(monkeypatch):
+    server = ThreadingHTTPServer(("127.0.0.1", 0), HuashengProtocolHandler)
+    server.requests = []
+    server.return_task_id = True
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
 
-    # 读取 cookie
-    sessdata = args.sessdata or os.environ.get("HUASHENG_SESSDATA")
-    bili_jct = args.csrf or os.environ.get("HUASHENG_BILI_JCT")
-
-    if not sessdata or not bili_jct:
-        logger.error("请设置 SESSDATA 和 CSRF")
-        logger.error("  环境变量: HUASHENG_SESSDATA, HUASHENG_BILI_JCT")
-        logger.error("  或参数: --sessdata xxx --csrf xxx")
-        sys.exit(1)
-
-    # 检查音频文件
-    audio_path = Path(args.audio)
-    if not audio_path.exists():
-        logger.error(f"音频文件不存在: {audio_path}")
-        sys.exit(1)
-
-    script_text = args.script
-    if len(script_text) < 10:
-        logger.warning("⚠️  文案太短（<10字），可能影响生成质量")
-
-    logger.info(f"音频: {audio_path.name} ({audio_path.stat().st_size} bytes)")
-    logger.info(f"文案: {script_text[:50]}...")
-    logger.info(f"Cookie: SESSDATA={sessdata[:5]}... bili_jct={bili_jct[:5]}...")
+    base_url = "http://{host}:{port}".format(
+        host=server.server_address[0], port=server.server_address[1]
+    )
+    monkeypatch.setattr(constants, "PROJECT_CREATE", base_url + "/api/huasheng/project/create")
+    monkeypatch.setattr(constants, "PROJECT_INFO", base_url + "/api/innovideo/project/info")
+    monkeypatch.setattr(
+        constants,
+        "EXPORT_TASK",
+        base_url + "/api/innovideo/project/export/video/task",
+    )
+    monkeypatch.setattr(
+        constants,
+        "EXPORT_INFO",
+        base_url + "/api/innovideo/project/export/video/info",
+    )
 
     try:
-        uploader = HuashengUploader(sessdata=sessdata, bili_jct=bili_jct)
-        result = uploader.run(str(audio_path), script_text)
-
-        if args.output:
-            with open(args.output, "w") as f:
-                json.dump(result, f, indent=2, ensure_ascii=False)
-            logger.info(f"结果已保存到: {args.output}")
-
-        sys.exit(0)
-    except Exception as e:
-        logger.error(f"❌ 测试失败: {e}")
-        import traceback
-        traceback.print_exc()
-        sys.exit(1)
+        yield server
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)
+        server.server_close()
 
 
-if __name__ == "__main__":
-    main()
+def make_client():
+    return HuashengClient(
+        cookies={"SESSDATA": "test-session", "bili_jct": "test-csrf"},
+        poll_interval=0.001,
+        poll_timeout=1,
+    )
+
+
+def test_public_sdk_create_export_and_download(protocol_server, tmp_path):
+    client = make_client()
+
+    project = client.create_project(script="真实 SDK 协议测试文案")
+    output = tmp_path / "result.mp4"
+    result_path = client.export_and_download(project.id, str(output), project.project_hash)
+
+    assert project.pid == 321
+    assert project.id == "654"
+    assert result_path == str(output)
+    assert output.read_bytes() == MEDIA_BYTES
+    assert (
+        hashlib.sha256(output.read_bytes()).hexdigest() == hashlib.sha256(MEDIA_BYTES).hexdigest()
+    )
+
+    paths = [(method, path) for method, path, _payload, _query in protocol_server.requests]
+    assert paths == [
+        ("POST", "/api/huasheng/project/create"),
+        ("GET", "/api/innovideo/project/info"),
+        ("POST", "/api/innovideo/project/export/video/task"),
+        ("GET", "/api/innovideo/project/export/video/info"),
+        ("GET", "/media/result.mp4"),
+    ]
+
+
+def test_public_sdk_rejects_export_without_task_id(protocol_server):
+    protocol_server.return_task_id = False
+    client = make_client()
+
+    with pytest.raises(RuntimeError, match="导出任务创建失败"):
+        client.export_video(654)
