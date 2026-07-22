@@ -2,6 +2,9 @@
 
 B站官方 AI 视频创作工具「[花生](https://www.huasheng.cn)」的非官方 Python API 封装。
 
+本仓库是开源SDK，不等同于WildFlow内部使用的重型花生引擎，也不承担野生云的用户、计费和任务运营。
+两者关系见[花生能力规划](https://github.com/wildsyn/wildflow/blob/main/docs/planning/huasheng/README.md)。
+
 ## 花生是什么？
 
 花生是 B站于 2025 年底推出的 AI 视频创作工具：
