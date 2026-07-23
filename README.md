@@ -150,6 +150,32 @@ wait_for_completion() → 轮询 project/info 直到完成
 - [示例代码](examples/)
 - [参考项目结构](https://github.com/Vespa314/bilibili-api) — 本项目参照的 B站 API 封装
 
+## 测试分层
+
+默认测试使用本地临时 HTTP 服务调用真实 `HuashengClient`，验证请求协议、
+项目创建、导出轮询和完整字节下载；它不会访问花生生产环境：
+
+```bash
+python3 -m pytest -q
+```
+
+真实外部验收会创建项目并消耗账号配额，必须由负责人显式开启。测试通过的
+标准不是拿到 CDN URL，而是完整下载文件并验证大小、SHA-256，以及 `ffprobe`
+报告中的时长、音视频轨道和 MP4 格式：
+
+```bash
+HUASHENG_REAL_E2E=1 \
+HUASHENG_SESSDATA='<temporary-test-cookie>' \
+HUASHENG_BILI_JCT='<temporary-test-csrf>' \
+HUASHENG_REAL_SCRIPT='<acceptance-script>' \
+python3 -m pytest -q tests/test_e2e_real_files.py \
+  --junitxml=huasheng-real-e2e.xml
+```
+
+将 XML 作为受控验收附件保存，其中包含下载大小、Content-Type、SHA-256、
+时长、格式、轨道和 codec 证据。不要把真实 Cookie、CSRF、输入媒体路径或
+下载链接提交到仓库。
+
 ## License
 
 MIT
