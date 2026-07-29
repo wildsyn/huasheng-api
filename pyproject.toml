@@ -33,10 +33,15 @@ dev = [
 ]
 
 [tool.ruff]
-extend = "../.shared-config/ruff-base.toml"
+target-version = "py39"
+line-length = 100
+
+[tool.ruff.lint]
+# Start with syntax and parser-level correctness. Tighten the public SDK's
+# historical style debt separately instead of making this baseline optional.
+select = ["E9", "F63", "F7", "F82"]
 
 [tool.pytest.ini_options]
-asyncio_mode = "auto"
 markers = [
     "real_external: opt-in tests that create real Huasheng projects and may consume quota",
 ]
