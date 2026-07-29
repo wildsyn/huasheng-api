@@ -259,6 +259,7 @@ class HuashengClient:
 
         start = time.time()
         last_progress = -1
+        project: Optional[Project] = None
 
         while True:
             elapsed = time.time() - start

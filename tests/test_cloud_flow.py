@@ -233,3 +233,15 @@ def test_public_sdk_rejects_non_video_download(protocol_server, tmp_path):
 
     with pytest.raises(RuntimeError, match="下载响应不是视频"):
         client.download_video(media_url, str(tmp_path / "invalid-media.mp4"))
+
+
+def test_wait_for_completion_times_out_before_first_poll(monkeypatch):
+    client = make_client()
+
+    def unexpected_poll(_pid):
+        pytest.fail("an already-expired timeout must not poll the remote project")
+
+    monkeypatch.setattr(client, "get_project", unexpected_poll)
+
+    with pytest.raises(TimeoutError, match="当前进度: unknown%"):
+        client.wait_for_completion(321, timeout=-1)

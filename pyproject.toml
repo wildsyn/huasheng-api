@@ -39,7 +39,7 @@ line-length = 100
 [tool.ruff.lint]
 # Start with syntax and parser-level correctness. Tighten the public SDK's
 # historical style debt separately instead of making this baseline optional.
-select = ["E9", "F63", "F7"]
+select = ["E9", "F63", "F7", "F82"]
 
 [tool.pytest.ini_options]
 markers = [

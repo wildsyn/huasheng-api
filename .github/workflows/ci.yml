@@ -23,5 +23,7 @@ jobs:
           cache: pip
       - name: Install project and test dependencies
         run: python -m pip install -e '.[dev]'
+      - name: Lint required correctness rules
+        run: python -m ruff check huasheng tests
       - name: Collect and run the offline test layer
         run: python -m pytest --collect-only -q && python -m pytest -q
